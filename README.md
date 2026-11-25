@@ -46,17 +46,13 @@ experimental workflows. They are not `get-swarm-forge` products.
 
 ## Install the helper
 
-Put `get-swarm-forge` somewhere on `PATH`:
-
 ```sh
-mkdir -p ~/cmds
-curl -L -o ~/cmds/get-swarm-forge \
-  https://raw.githubusercontent.com/egll-tech/swarm-forge/main/get-swarm-forge
-chmod +x ~/cmds/get-swarm-forge
+brew tap egll/swarm-forge https://github.com/egll-tech/swarm-forge.git
+brew install egll/swarm-forge
 ```
 
-Add `~/cmds` to `PATH`, then recopy the helper when it changes. The helper is
-the supported entry point because it composes files from more than one branch.
+Upgrade with `brew upgrade egll/swarm-forge` when the helper changes. The helper
+is the supported entry point because it composes files from more than one branch.
 
 ## Composition
 
