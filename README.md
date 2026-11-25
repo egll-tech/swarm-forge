@@ -6,8 +6,8 @@ until it either produces another committed recommendation set or records final
 approval.
 
 The repository's master branch is named
-[`main`](https://github.com/unclebob/swarm-forge/tree/main). Read its
-[README](https://github.com/unclebob/swarm-forge/blob/main/README.md) for the
+[`main`](https://github.com/egll-tech/swarm-forge/tree/main). Read its
+[README](https://github.com/egll-tech/swarm-forge/blob/main/README.md) for the
 base SwarmForge concepts and prerequisites. `adversaries` is a separate line of
 work, not a `get-swarm-forge` product.
 
