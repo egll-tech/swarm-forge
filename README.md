@@ -46,8 +46,9 @@ state. A project also has its own `.worktrees/` role checkouts and
 
 The host configuration is
 [`swarmforge/swarmforge.conf`](swarmforge/swarmforge.conf). With no active
-`Lieutenant` line, the host defaults to Grok. Add a line such as this to select
-the backend and pass extra arguments:
+`Lieutenant` line, the host defaults to Grok. `get-swarm-forge` asks which
+agent CLI to use and can write that line for you. Add a line such as this to
+select the backend and pass extra arguments:
 
 ```conf
 Lieutenant grok --yolo
@@ -117,6 +118,20 @@ empty directory that will contain the forge:
 get-swarm-forge project-manager
 ./swarm
 ```
+
+In a terminal the installer asks which agent CLI to use: `claude`, `codex`,
+`copilot`, or `grok`. The choice is written into the host `Lieutenant` line and
+into every installed pack role. Press Enter to keep the CLI already written on
+each template line; the lieutenant then still defaults to Grok. Choose without
+a prompt by passing `--cli` or piping one name:
+
+```sh
+get-swarm-forge project-manager --cli claude
+```
+
+A non-interactive run that supplies no CLI keeps each template's CLI.
+Re-running the installer without a CLI copies those templates again, including
+the agents published on them. Pass `--cli` again to set every role to one CLI.
 
 The installer creates `packs/` and `projects/` and installs the host.
 `./swarm` starts only the dashboard and host lieutenant. Project agents start
