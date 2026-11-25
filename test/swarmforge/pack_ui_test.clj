@@ -2364,7 +2364,7 @@
     (write-file (fs/path root "packs" pack "swarmforge/roles/coder.prompt") "coder\n")))
 
 (deftest forge-infers-github-project-name
-  (let [result (pack-web (tmp-dir) true "--test-inferred-name" "unclebob/swarm-forge" "github")]
+  (let [result (pack-web (tmp-dir) true "--test-inferred-name" "egll-tech/swarm-forge" "github")]
     (is (zero? (:exit result)))
     (is (= "swarm-forge" (str/trim (:out result))))))
 
