@@ -12,11 +12,13 @@
   (spit (str path) text))
 
 (defn run
-  [{:keys [dir env ok?]} & args]
-  (let [result (apply sh/sh (concat args [:dir (str dir)
-                                          :env (merge {"PATH" (System/getenv "PATH")
-                                                       "GIT_CONFIG_NOSYSTEM" "1"}
-                                                      env)]))]
+  [{:keys [dir env ok? in]} & args]
+  (let [result (apply sh/sh (concat args
+                                    (when-not (nil? in) [:in in])
+                                    [:dir (str dir)
+                                     :env (merge {"PATH" (System/getenv "PATH")
+                                                  "GIT_CONFIG_NOSYSTEM" "1"}
+                                                 env)]))]
     (when (and (not (false? ok?)) (not= 0 (:exit result)))
       (throw (ex-info (str "Command failed: " (str/join " " args))
                       (assoc result :args args))))
@@ -1108,8 +1110,13 @@
       (let [result (run {:dir host
                          :env {"SWARMFORGE_BASE_DIR" (str base)
                                "SWARMFORGE_PACKS_DIR" (str packs)}}
-                        (str (fs/path repo-root "get-swarm-forge")))]
+                        (str (fs/path repo-root "get-swarm-forge"))
+                        "project-manager")]
         (is (zero? (:exit result)) (:err result))
+        (is (= "# Lieutenant grok\n"
+               (slurp (str (fs/path host "swarmforge/swarmforge.conf")))))
+        (is (= "window specifier grok master\n"
+               (slurp (str (fs/path host "packs/two-pack/swarmforge/swarmforge.conf")))))
         (is (= "host-readme\n" (slurp (str (fs/path host "README.md")))))
         (is (= "{:paths [\"test\"]}\n" (slurp (str (fs/path host "bb.edn")))))
         (is (= "keep\n" (slurp (str (fs/path host "test/keep.clj")))))
@@ -1130,4 +1137,270 @@
         (fs/delete-tree host)
         (fs/delete-tree base)
         (fs/delete-tree packs)))))
+
+(def mixed-pack-conf
+  (str "# keep\n"
+       "window-invisible coder grok master\n"
+       "window-invisible cleaner codex cleaner batch back-one --yolo\n"))
+
+(def claude-pack-conf
+  (str "# keep\n"
+       "window-invisible coder claude master\n"
+       "window-invisible cleaner claude cleaner batch back-one --yolo\n"))
+
+(defn write-shared-host! [base]
+  (doseq [name ["swarmforge.sh" "handoffd.bb" "done_with_current.sh"]]
+    (write-file (fs/path base "swarmforge/scripts" name) (str name "\n")))
+  (write-file (fs/path base "swarm") "#!/bin/sh\necho swarm\n")
+  (write-file (fs/path base "swarmforge/constitution.prompt") "MAIN-CONSTITUTION\n")
+  (write-file (fs/path base "swarmforge/roles/lieutenant.prompt") "LIEUTENANT\n")
+  (write-file (fs/path base "swarmforge/swarmforge.conf")
+              "# Host lieutenant.\n# Lieutenant grok --yolo\n")
+  (doseq [article ["engineering.prompt" "workflow.prompt" "handoffs.prompt"]]
+    (write-file (fs/path base "swarmforge/constitution/articles" article)
+                (str article "\n"))))
+
+(defn write-window-pack! [pack conf]
+  (write-file (fs/path pack "swarm") "#!/bin/sh\necho swarm\n")
+  (write-file (fs/path pack "swarmforge/swarmforge.conf") conf)
+  (write-file (fs/path pack "swarmforge/constitution.prompt") "PACK-CONSTITUTION\n")
+  (write-file (fs/path pack "swarmforge/roles/coder.prompt") "coder\n")
+  (write-file (fs/path pack "swarmforge/roles/cleaner.prompt") "cleaner\n"))
+
+(defn project-manager-sources []
+  (let [host (tmp-dir)
+        base (tmp-dir)
+        packs (tmp-dir)]
+    (write-shared-host! base)
+    (doseq [pack-name ["two-pack" "four-pack" "six-pack"]]
+      (write-window-pack! (fs/path packs pack-name) mixed-pack-conf))
+    {:host host :base base :packs packs}))
+
+(defn delete-sources! [sources]
+  (doseq [dir (vals sources)]
+    (fs/delete-tree dir)))
+
+(defn install-env [sources]
+  {"SWARMFORGE_BASE_DIR" (str (:base sources))
+   "SWARMFORGE_PACKS_DIR" (str (:packs sources))})
+
+(defn installer [& args]
+  (into [(str (fs/path repo-root "get-swarm-forge"))] args))
+
+(defn pack-conf-text [host pack-name]
+  (slurp (str (fs/path host "packs" pack-name "swarmforge/swarmforge.conf"))))
+
+(deftest get-swarm-forge-requires-a-product-and-documents-cli
+  (let [missing (run {:dir repo-root :ok? false}
+                     (str (fs/path repo-root "get-swarm-forge")))
+        help (run {:dir repo-root}
+                  (str (fs/path repo-root "get-swarm-forge"))
+                  "--help")]
+    (is (not (zero? (:exit missing))))
+    (is (zero? (:exit help)))
+    (is (str/includes? (:err help) "--cli"))))
+
+(deftest get-swarm-forge-cli-flag-rewrites-lieutenant-and-every-pack
+  ;; Given pack templates that mix grok and codex
+  ;; When the installer is run with --cli claude
+  ;; Then the lieutenant and every pack role use claude, and other tokens stay
+  (let [sources (project-manager-sources)]
+    (try
+      (let [result (apply run {:dir (:host sources)
+                               :env (install-env sources)}
+                          (installer "project-manager" "--cli" "Claude"))
+            host-conf (slurp (str (fs/path (:host sources) "swarmforge/swarmforge.conf")))]
+        (is (zero? (:exit result)) (:err result))
+        (is (str/includes? (:out result) "using claude"))
+        (is (str/includes? host-conf "# Lieutenant grok --yolo"))
+        (is (str/includes? host-conf "Lieutenant claude\n"))
+        (is (not (re-find #"(?m)^Lieutenant grok\b" host-conf)))
+        (doseq [pack-name ["two-pack" "four-pack" "six-pack"]]
+          (is (= claude-pack-conf (pack-conf-text (:host sources) pack-name)) pack-name)))
+      (finally
+        (delete-sources! sources)))))
+
+(deftest get-swarm-forge-keeps-extra-args-on-an-existing-lieutenant-line
+  ;; Given a host conf that already selects codex and passes --yolo
+  ;; When the installer is run with --cli grok
+  ;; Then the lieutenant CLI changes and --yolo stays
+  (let [sources (project-manager-sources)
+        host (:host sources)]
+    (try
+      (write-file (fs/path host "swarmforge/swarmforge.conf")
+                  "Lieutenant codex --yolo\n")
+      (let [result (apply run {:dir host :env (install-env sources)}
+                          (installer "project-manager" "--cli=grok"))
+            host-conf (slurp (str (fs/path host "swarmforge/swarmforge.conf")))]
+        (is (zero? (:exit result)) (:err result))
+        (is (= "Lieutenant grok --yolo\n" host-conf))
+        (is (= (str/replace mixed-pack-conf #"\b(grok|codex)\b" "grok")
+               (pack-conf-text host "six-pack"))))
+      (finally
+        (delete-sources! sources)))))
+
+(deftest get-swarm-forge-env-and-stdin-can-select-or-keep-a-cli
+  (let [sources (project-manager-sources)]
+    (try
+      (let [host (:host sources)
+            selected (apply run {:dir host
+                                 :env (assoc (install-env sources)
+                                             "SWARMFORGE_CLI" "copilot")}
+                            (installer "project-manager"))
+            host-conf (slurp (str (fs/path host "swarmforge/swarmforge.conf")))]
+        (is (zero? (:exit selected)) (:err selected))
+        (is (str/includes? host-conf "Lieutenant copilot\n"))
+        (is (str/includes? (pack-conf-text host "four-pack") "cleaner copilot cleaner")))
+      (finally
+        (delete-sources! sources))))
+  (let [sources (project-manager-sources)]
+    (try
+      (let [host (:host sources)
+            kept (apply run {:dir host
+                             :env (install-env sources)
+                             :in "keep\n"}
+                        (installer "project-manager"))]
+        (is (zero? (:exit kept)) (:err kept))
+        (is (= "# Host lieutenant.\n# Lieutenant grok --yolo\n"
+               (slurp (str (fs/path host "swarmforge/swarmforge.conf")))))
+        (is (= mixed-pack-conf (pack-conf-text host "two-pack"))))
+      (finally
+        (delete-sources! sources))))
+  (let [sources (project-manager-sources)]
+    (try
+      (let [host (:host sources)
+            numbered (apply run {:dir host
+                                 :env (install-env sources)
+                                 :in "1\n"}
+                            (installer "project-manager"))]
+        (is (zero? (:exit numbered)) (:err numbered))
+        (is (str/includes? (slurp (str (fs/path host "swarmforge/swarmforge.conf")))
+                           "Lieutenant claude\n"))
+        (is (= claude-pack-conf (pack-conf-text host "two-pack"))))
+      (finally
+        (delete-sources! sources)))))
+
+(deftest get-swarm-forge-rejects-an-unknown-cli-before-installing
+  (let [sources (project-manager-sources)]
+    (try
+      (let [result (apply run {:dir (:host sources)
+                               :env (install-env sources)
+                               :ok? false}
+                          (installer "project-manager" "--cli" "gemini"))]
+        (is (not (zero? (:exit result))))
+        (is (str/includes? (str (:err result) (:out result)) "gemini"))
+        (is (not (fs/exists? (fs/path (:host sources) "packs"))))
+        (is (not (fs/exists? (fs/path (:host sources) "swarmforge")))))
+      (finally
+        (delete-sources! sources)))))
+
+(deftest get-swarm-forge-pack-install-uses-the-selected-cli
+  ;; Given a two-pack template
+  ;; When it is composed with --cli codex
+  ;; Then the composed project uses codex and gains no lieutenant line
+  (let [host (tmp-dir)
+        base (tmp-dir)
+        pack (tmp-dir)]
+    (try
+      (write-shared-host! base)
+      (write-window-pack! pack mixed-pack-conf)
+      (let [result (run {:dir host
+                         :env {"SWARMFORGE_BASE_DIR" (str base)
+                               "SWARMFORGE_PACKS_DIR" (str pack)}}
+                        (str (fs/path repo-root "get-swarm-forge"))
+                        "two-pack" "--cli" "codex")
+            conf (slurp (str (fs/path host "swarmforge/swarmforge.conf")))]
+        (is (zero? (:exit result)) (:err result))
+        (is (str/includes? (:out result) "using codex"))
+        (is (str/includes? conf "coder codex master"))
+        (is (str/includes? conf "cleaner codex cleaner batch back-one --yolo"))
+        (is (not (str/includes? conf "Lieutenant")))
+        (is (not (str/includes? conf "grok"))))
+      (finally
+        (fs/delete-tree host)
+        (fs/delete-tree base)
+        (fs/delete-tree pack)))))
+
+(deftest get-swarm-forge-lieutenant-product-uses-the-selected-cli
+  (let [host (tmp-dir)
+        base (tmp-dir)
+        pack (tmp-dir)]
+    (try
+      (write-shared-host! base)
+      (write-window-pack! pack mixed-pack-conf)
+      (let [result (run {:dir host
+                         :env {"SWARMFORGE_BASE_DIR" (str base)
+                               "SWARMFORGE_PACKS_DIR" (str pack)}}
+                        (str (fs/path repo-root "get-swarm-forge"))
+                        "--cli" "copilot" "lieutenant")
+            project-conf (slurp (str (fs/path host ".swarmforge/project-pack/swarmforge/swarmforge.conf")))
+            host-conf (slurp (str (fs/path host "swarmforge/swarmforge.conf")))]
+        (is (zero? (:exit result)) (:err result))
+        (is (str/includes? host-conf "Lieutenant copilot\n"))
+        (is (str/includes? project-conf "coder copilot master"))
+        (is (str/includes? project-conf "cleaner copilot cleaner")))
+      (finally
+        (fs/delete-tree host)
+        (fs/delete-tree base)
+        (fs/delete-tree pack)))))
+
+(defn pty-install [dir env choice & args]
+  (let [driver (fs/path dir ".pty_drive.py")
+        installer (str (fs/path repo-root "get-swarm-forge"))]
+    (write-file driver
+                (str "import os, pty, select, signal, sys\n"
+                     "installer, choice = sys.argv[1], sys.argv[2].encode()\n"
+                     "cmd = [installer, *sys.argv[3:]]\n"
+                     "pid, fd = pty.fork()\n"
+                     "if pid == 0:\n"
+                     "    os.execv(installer, cmd)\n"
+                     "os.write(fd, choice)\n"
+                     "out = bytearray()\n"
+                     "while True:\n"
+                     "    readable, _, _ = select.select([fd], [], [], 5)\n"
+                     "    if not readable:\n"
+                     "        os.kill(pid, signal.SIGKILL)\n"
+                     "        break\n"
+                     "    try:\n"
+                     "        chunk = os.read(fd, 4096)\n"
+                     "    except OSError:\n"
+                     "        break\n"
+                     "    if not chunk:\n"
+                     "        break\n"
+                     "    out += chunk\n"
+                     "_, status = os.waitpid(pid, 0)\n"
+                     "sys.stdout.buffer.write(out)\n"
+                     "sys.exit(os.WEXITSTATUS(status) if os.WIFEXITED(status) else 1)\n"))
+    (apply run {:dir dir :env env :ok? false}
+           "python3" (str driver) installer choice args)))
+
+(deftest get-swarm-forge-terminal-menu-selects-a-cli
+  ;; Given a terminal
+  ;; When the operator picks claude, or presses Enter
+  ;; Then claude is written through, or each template CLI stays
+  (let [sources (project-manager-sources)]
+    (try
+      (let [host (:host sources)
+            result (pty-install host (install-env sources) "claude\n"
+                                "project-manager")
+            shown (str (:out result) (:err result))]
+        (is (zero? (:exit result)) shown)
+        (doseq [cli ["claude" "codex" "copilot" "grok"]]
+          (is (str/includes? shown cli) cli))
+        (is (str/includes? (slurp (str (fs/path host "swarmforge/swarmforge.conf")))
+                           "Lieutenant claude\n"))
+        (is (= claude-pack-conf (pack-conf-text host "two-pack"))))
+      (finally
+        (delete-sources! sources))))
+  (let [sources (project-manager-sources)]
+    (try
+      (let [host (:host sources)
+            result (pty-install host (install-env sources) "\n"
+                                "project-manager")]
+        (is (zero? (:exit result)) (str (:out result) (:err result)))
+        (is (= "# Host lieutenant.\n# Lieutenant grok --yolo\n"
+               (slurp (str (fs/path host "swarmforge/swarmforge.conf")))))
+        (is (= mixed-pack-conf (pack-conf-text host "six-pack"))))
+      (finally
+        (delete-sources! sources)))))
 
