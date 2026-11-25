@@ -8,7 +8,7 @@
 (use-fixtures :once once-fixture)
 
 (deftest forge-infers-github-project-name
-  (let [result (pack-web (tmp-dir) true "--test-inferred-name" "unclebob/swarm-forge" "github")]
+  (let [result (pack-web (tmp-dir) true "--test-inferred-name" "egll-tech/swarm-forge" "github")]
     (is (zero? (:exit result)))
     (is (= "swarm-forge" (str/trim (:out result))))))
 (deftest forge-new-project-writes-mission-and-conf
