@@ -3,24 +3,66 @@ set -euo pipefail
 
 default_repo_url="https://github.com/egll-tech/swarm-forge"
 pack_names=(two-pack four-pack six-pack)
+known_clis=(claude codex copilot grok)
 
 usage() {
-  echo "usage: get-swarm-forge <two-pack|four-pack|six-pack|project-manager|lieutenant>" >&2
+  echo "usage: get-swarm-forge <two-pack|four-pack|six-pack|project-manager|lieutenant> [--cli <claude|codex|copilot|grok>]" >&2
   echo "  Packs (two-pack, four-pack, six-pack) compose into the current directory." >&2
   echo "  project-manager and lieutenant are forges (projects/, dashboard, host lieutenant)." >&2
+  echo "  --cli writes that agent CLI onto the lieutenant and every pack role." >&2
+  echo "  With no --cli, a terminal asks which CLI to use. Press Enter to keep each template's CLI." >&2
+  echo "  With no terminal, pass --cli or pipe one CLI name. Otherwise each template's CLI is kept." >&2
 }
 
-if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  usage
-  exit 0
-fi
+product=""
+cli_arg=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --cli)
+      if [[ $# -lt 2 || "$2" == -* ]]; then
+        echo "get-swarm-forge: --cli requires a CLI name" >&2
+        usage
+        exit 1
+      fi
+      cli_arg="$2"
+      shift 2
+      ;;
+    --cli=*)
+      cli_arg="${1#--cli=}"
+      if [[ -z "$cli_arg" ]]; then
+        echo "get-swarm-forge: --cli requires a CLI name" >&2
+        usage
+        exit 1
+      fi
+      shift
+      ;;
+    -*)
+      echo "get-swarm-forge: unknown option '$1'" >&2
+      usage
+      exit 1
+      ;;
+    *)
+      if [[ -n "$product" ]]; then
+        echo "get-swarm-forge: unexpected argument '$1'" >&2
+        usage
+        exit 1
+      fi
+      product="$1"
+      shift
+      ;;
+  esac
+done
 
-if [[ $# -ne 1 || "$1" == -* ]]; then
+if [[ -z "$product" ]]; then
+  echo "get-swarm-forge: missing product" >&2
   usage
   exit 1
 fi
 
-product="$1"
 case "$product" in
   two-pack|four-pack|six-pack|project-manager|lieutenant) ;;
   *)
@@ -82,6 +124,190 @@ fail_missing() {
   local missing_path="$1"
   echo "get-swarm-forge: missing required file after composing swarm: $missing_path" >&2
   exit 1
+}
+
+trim_choice() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
+
+# Sets selected_cli, or clears it and marks an explicit keep.
+# Returns 1 when the token is not a CLI, a menu number, or keep.
+accept_cli_choice() {
+  local choice keep_index
+  choice="$(trim_choice "$1")"
+  choice="${(L)choice}"
+  keep_index=$(( ${#known_clis[@]} + 1 ))
+  case "$choice" in
+    ""|keep)
+      selected_cli=""
+      cli_explicit_keep=1
+      return 0
+      ;;
+  esac
+  if [[ "$choice" == <-> ]]; then
+    if (( choice >= 1 && choice <= ${#known_clis[@]} )); then
+      selected_cli="${known_clis[$choice]}"
+      return 0
+    elif (( choice == keep_index )); then
+      selected_cli=""
+      cli_explicit_keep=1
+      return 0
+    fi
+    return 1
+  fi
+  case "$choice" in
+    claude|codex|copilot|grok)
+      selected_cli="$choice"
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+reject_unknown_cli() {
+  echo "get-swarm-forge: unknown CLI '$1'" >&2
+  echo "Choose claude, codex, copilot, grok, or keep." >&2
+  exit 1
+}
+
+prompt_cli() {
+  local choice name keep_index i
+  cli_prompted=1
+  keep_index=$(( ${#known_clis[@]} + 1 ))
+  echo "Which agent CLI should this install use for the lieutenant and every pack role?" >&2
+  i=1
+  for name in "${known_clis[@]}"; do
+    echo "  $i) $name" >&2
+    i=$((i + 1))
+  done
+  echo "  ${keep_index}) keep the CLI already on each template line" >&2
+  echo "Choosing a CLI writes it onto the lieutenant and every pack role." >&2
+  echo "Press Enter to keep each template line. The lieutenant then defaults to grok." >&2
+  while true; do
+    printf "Choice [keep]: " >&2
+    if ! IFS= read -r choice; then
+      echo >&2
+      selected_cli=""
+      cli_explicit_keep=1
+      return 0
+    fi
+    if accept_cli_choice "$choice"; then
+      return 0
+    fi
+    echo "get-swarm-forge: choose claude, codex, copilot, grok, or keep." >&2
+  done
+}
+
+choose_cli() {
+  local piped
+  selected_cli=""
+  cli_explicit_keep=0
+  cli_prompted=0
+  if [[ -n "${cli_arg:-}" ]]; then
+    if ! accept_cli_choice "$cli_arg"; then
+      reject_unknown_cli "$cli_arg"
+    fi
+  elif [[ -n "${SWARMFORGE_CLI:-}" ]]; then
+    if ! accept_cli_choice "$SWARMFORGE_CLI"; then
+      reject_unknown_cli "$SWARMFORGE_CLI"
+    fi
+  elif [[ -t 0 && -t 1 ]]; then
+    prompt_cli
+  elif IFS= read -r piped; then
+    if ! accept_cli_choice "$piped"; then
+      reject_unknown_cli "$piped"
+    fi
+  fi
+  if [[ -n "${selected_cli:-}" ]]; then
+    echo "get-swarm-forge: using ${selected_cli}." >&2
+  elif [[ "${cli_explicit_keep:-}" == "1" || "${cli_prompted:-}" == "1" ]]; then
+    echo "get-swarm-forge: keeping each template's CLI." >&2
+  else
+    echo "get-swarm-forge: no CLI selected; keeping each template's CLI. Pass --cli <claude|codex|copilot|grok> to choose one." >&2
+  fi
+}
+
+apply_cli_to_window_conf() {
+  local conf="$1"
+  local cli="$2"
+  local tmp
+  [[ -f "$conf" ]] || return 0
+  tmp="$tmp_dir/cli-window-conf"
+  awk -v cli="$cli" '
+    $1 == "window" || $1 == "window-invisible" {
+      if (NF >= 4) $3 = cli
+      print
+      next
+    }
+    { print }
+  ' "$conf" > "$tmp"
+  mv "$tmp" "$conf"
+}
+
+apply_cli_to_host_conf() {
+  local conf="$1"
+  local cli="$2"
+  local tmp last
+  mkdir -p "${conf:h}"
+  if [[ ! -f "$conf" ]]; then
+    printf 'Lieutenant %s\n' "$cli" > "$conf"
+    return 0
+  fi
+  tmp="$tmp_dir/cli-host-conf"
+  awk -v cli="$cli" '
+    tolower($1) == "lieutenant" {
+      if (NF < 2) print "Lieutenant " cli
+      else { $2 = cli; print }
+      next
+    }
+    { print }
+  ' "$conf" > "$tmp"
+  mv "$tmp" "$conf"
+  if ! grep -Eiq '^[[:space:]]*lieutenant[[:space:]]+' "$conf"; then
+    if [[ -s "$conf" ]]; then
+      last="$(tail -c 1 "$conf" || true)"
+      if [[ "$last" != $'\n' ]]; then
+        printf '\n' >> "$conf"
+      fi
+    fi
+    printf 'Lieutenant %s\n' "$cli" >> "$conf"
+  fi
+}
+
+apply_selected_cli() {
+  local pack_name
+  [[ -n "${selected_cli:-}" ]] || return 0
+  case "$product" in
+    project-manager|lieutenant)
+      apply_cli_to_host_conf "swarmforge/swarmforge.conf" "$selected_cli"
+      if [[ "$product" == "lieutenant" ]]; then
+        apply_cli_to_window_conf ".swarmforge/project-pack/swarmforge/swarmforge.conf" "$selected_cli"
+      else
+        for pack_name in "${pack_names[@]}"; do
+          apply_cli_to_window_conf "packs/${pack_name}/swarmforge/swarmforge.conf" "$selected_cli"
+        done
+      fi
+      ;;
+    *)
+      apply_cli_to_window_conf "swarmforge/swarmforge.conf" "$selected_cli"
+      ;;
+  esac
+}
+
+installed_message() {
+  local kind="$1"
+  local from="$2"
+  local next_step="$3"
+  if [[ -n "${selected_cli:-}" ]]; then
+    echo "SwarmForge $kind installed from $from using $selected_cli. $next_step"
+  else
+    echo "SwarmForge $kind installed from $from. $next_step"
+  fi
 }
 
 copy_shared_scripts_and_articles() {
@@ -207,6 +433,8 @@ host_from="$product"
 packs_src="${SWARMFORGE_PACKS_DIR:-}"
 main_dir="$tmp_dir/main"
 
+choose_cli
+
 if [[ "$product" == two-pack || "$product" == four-pack || "$product" == six-pack ]]; then
   if [[ -z "${SWARMFORGE_BASE_DIR:-}" ]]; then
     download_branch "main" "$main_dir"
@@ -223,6 +451,7 @@ if [[ "$product" == two-pack || "$product" == four-pack || "$product" == six-pac
   [[ -f swarm ]] || fail_missing "swarm from pack $product"
   chmod +x swarm
   verify_pack_roles "."
+  apply_selected_cli
   require_files \
     swarm \
     swarmforge/scripts/swarmforge.sh \
@@ -233,7 +462,7 @@ if [[ "$product" == two-pack || "$product" == four-pack || "$product" == six-pac
     swarmforge/constitution/articles/engineering.prompt \
     swarmforge/swarmforge.conf \
     swarmforge/constitution.prompt
-  echo "SwarmForge pack installed from $product. Run ./swarm to start the pack."
+  installed_message "pack" "$product" "Run ./swarm to start the pack."
   exit 0
 fi
 
@@ -249,6 +478,8 @@ if [[ "$product" == "lieutenant" ]]; then
 else
   install_named_packs
 fi
+
+apply_selected_cli
 
 required_files=(
   swarm
@@ -273,4 +504,4 @@ fi
 
 require_files "${required_files[@]}"
 
-echo "SwarmForge forge installed from $host_from. Run ./swarm to start the dashboard."
+installed_message "forge" "$host_from" "Run ./swarm to start the dashboard."
