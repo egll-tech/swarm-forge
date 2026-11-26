@@ -1,11 +1,11 @@
 #!/usr/bin/env zsh
 set -euo pipefail
 
-SCRIPT_NAME="get-swarm-forge"
 FORMULA_PATH="Formula/swarm-forge.rb"
-REPO="egll/swarm-forge"          # ← adjust
+REPO="egll-tech/swarm-forge"
 REMOTE="${REMOTE:-origin}"
 SCRIPT_DIR="${0:A:h}"
+cd "${SCRIPT_DIR:h}"
 
 usage() {
   cat <<EOF >&2
@@ -55,6 +55,12 @@ fi
 
 if [[ $FORCE == true && -z $EXPLICIT ]]; then
   echo "Error: --force is only allowed with --version" >&2
+  exit 1
+fi
+
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+if [[ $BRANCH != main ]]; then
+  echo "Error: release must be run from main (currently ${BRANCH})." >&2
   exit 1
 fi
 
@@ -113,31 +119,104 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
   exit 1
 fi
 
-SHA256=$(git show "HEAD:${SCRIPT_NAME}" | shasum -a 256 | awk '{print $1}')
-echo "sha256: $SHA256"
-
 if [[ ! -f $FORMULA_PATH ]]; then
   echo "Error: $FORMULA_PATH not found" >&2
   exit 1
 fi
 
+file_sha256() {
+  local file=$1
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$file" | awk '{print $1}'
+  elif command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$file" | awk '{print $1}'
+  else
+    echo "Error: need shasum or sha256sum" >&2
+    exit 1
+  fi
+}
+
 sed -i.bak \
   -e "s/\(version \)\"[^\"]*\"/\1\"${NEW_VERSION}\"/" \
-  -e "s/\(sha256 \)\"[^\"]*\"/\1\"${SHA256}\"/" \
   "$FORMULA_PATH"
 rm -f "${FORMULA_PATH}.bak"
 
-echo "Formula updated:"
-grep -E '^\s*(version|sha256)' "$FORMULA_PATH"
+echo "Formula version updated:"
+grep -E '^\s*(version|sha256|url)' "$FORMULA_PATH"
 
 git add "$FORMULA_PATH"
 git commit -m "chore(formula): release ${TAG}"
 
 git tag -a "$TAG" -m "Release ${TAG}"
 
-echo "Pushing tag..."
+echo "Pushing ${BRANCH} and ${TAG}..."
+git push "$REMOTE" HEAD
 git push "$REMOTE" "$TAG"
 
+ARCHIVE_URL="https://github.com/${REPO}/archive/refs/tags/${TAG}.tar.gz"
+ARCHIVE=$(mktemp)
+trap 'rm -f "$ARCHIVE" "${ARCHIVE}.list"' EXIT
+
+echo "Downloading ${ARCHIVE_URL}"
+downloaded=false
+for attempt in 1 2 3 4 5 6; do
+  if curl -fsSL "$ARCHIVE_URL" -o "$ARCHIVE"; then
+    downloaded=true
+    break
+  fi
+  echo "Archive not ready (attempt ${attempt}); retrying..."
+  sleep $((attempt * 2))
+done
+if [[ $downloaded != true ]]; then
+  echo "Error: failed to download ${ARCHIVE_URL}" >&2
+  exit 1
+fi
+
+# Save the listing. grep -q in a pipe can SIGPIPE tar, and pipefail would
+# then treat a complete archive as missing the installer.
+tar -tzf "$ARCHIVE" >"${ARCHIVE}.list"
+if ! grep -q 'bin/get-swarm-forge$' "${ARCHIVE}.list"; then
+  echo "Error: ${TAG} archive is missing bin/get-swarm-forge" >&2
+  exit 1
+fi
+
+SHA256=$(file_sha256 "$ARCHIVE")
+echo "sha256: $SHA256"
+
+sed -i.bak \
+  -e "s/\(sha256 \)\"[^\"]*\"/\1\"${SHA256}\"/" \
+  "$FORMULA_PATH"
+rm -f "${FORMULA_PATH}.bak"
+
+echo "Formula checksum updated:"
+grep -E '^\s*(version|sha256)' "$FORMULA_PATH"
+
+git add "$FORMULA_PATH"
+git commit -m "chore(formula): pin sha256 for ${TAG}"
+git push "$REMOTE" HEAD
+
+echo "Updating homebrew branch..."
+homebrew_status=0
+{
+  git fetch "$REMOTE" homebrew
+  git checkout -B homebrew "$REMOTE/homebrew"
+  git checkout main -- "$FORMULA_PATH"
+  git add "$FORMULA_PATH"
+  if ! git diff --cached --quiet; then
+    git commit -m "chore(formula): release ${TAG}"
+  fi
+  git push "$REMOTE" homebrew
+} || homebrew_status=$?
+
+git checkout main
+
+if [[ $homebrew_status -ne 0 ]]; then
+  echo "Error: failed to update the homebrew branch" >&2
+  exit "$homebrew_status"
+fi
+
 echo
-echo "Released $TAG (tag pushed)"
-echo "Users: brew upgrade egll/swarm-forge"
+echo "Released ${TAG}"
+echo "homebrew branch updated and pushed"
+echo "Back on main"
+echo "Users: brew upgrade swarm-forge"
