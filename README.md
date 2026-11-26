@@ -47,12 +47,14 @@ experimental workflows. They are not `get-swarm-forge` products.
 ## Install the helper
 
 ```sh
-brew tap egll/swarm-forge https://github.com/egll-tech/swarm-forge.git
-brew install egll/swarm-forge
+brew tap egll/swarm-forge https://github.com/egll-tech/swarm-forge.git --branch homebrew
+brew install swarm-forge
 ```
 
-Upgrade with `brew upgrade egll/swarm-forge` when the helper changes. The helper
-is the supported entry point because it composes files from more than one branch.
+This places every script from `bin/` (`get-swarm-forge`, and any other tools
+added there) on your `PATH`. Upgrade with `brew upgrade swarm-forge` when the
+helper changes. The helper is the supported entry point because it composes
+files from more than one branch.
 
 ## Composition
 
