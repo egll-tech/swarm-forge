@@ -47,7 +47,8 @@ experimental workflows. They are not `get-swarm-forge` products.
 ## Install the helper
 
 ```sh
-brew tap egll/swarm-forge https://github.com/egll-tech/swarm-forge.git --branch homebrew
+brew tap egll/swarm-forge https://github.com/egll-tech/swarm-forge.git
+brew trust egll/swarm-forge
 brew install swarm-forge
 ```
 
@@ -55,6 +56,10 @@ This places every script from `bin/` (`get-swarm-forge`, and any other tools
 added there) on your `PATH`. Upgrade with `brew upgrade swarm-forge` when the
 helper changes. The helper is the supported entry point because it composes
 files from more than one branch.
+
+Homebrew installs `Formula/swarm-forge.rb` from this repository's default
+branch, `main`. Current Homebrew will not load that third-party tap until
+`brew trust` has allowed it.
 
 ## Composition
 
