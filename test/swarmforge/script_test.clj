@@ -1110,7 +1110,7 @@
       (let [result (run {:dir host
                          :env {"SWARMFORGE_BASE_DIR" (str base)
                                "SWARMFORGE_PACKS_DIR" (str packs)}}
-                        (str (fs/path repo-root "get-swarm-forge"))
+                        (str (fs/path repo-root "bin" "get-swarm-forge"))
                         "project-manager")]
         (is (zero? (:exit result)) (:err result))
         (is (= "# Lieutenant grok\n"
@@ -1185,16 +1185,16 @@
    "SWARMFORGE_PACKS_DIR" (str (:packs sources))})
 
 (defn installer [& args]
-  (into [(str (fs/path repo-root "get-swarm-forge"))] args))
+  (into [(str (fs/path repo-root "bin" "get-swarm-forge"))] args))
 
 (defn pack-conf-text [host pack-name]
   (slurp (str (fs/path host "packs" pack-name "swarmforge/swarmforge.conf"))))
 
 (deftest get-swarm-forge-requires-a-product-and-documents-cli
   (let [missing (run {:dir repo-root :ok? false}
-                     (str (fs/path repo-root "get-swarm-forge")))
+                     (str (fs/path repo-root "bin" "get-swarm-forge")))
         help (run {:dir repo-root}
-                  (str (fs/path repo-root "get-swarm-forge"))
+                  (str (fs/path repo-root "bin" "get-swarm-forge"))
                   "--help")]
     (is (not (zero? (:exit missing))))
     (is (zero? (:exit help)))
@@ -1307,7 +1307,7 @@
       (let [result (run {:dir host
                          :env {"SWARMFORGE_BASE_DIR" (str base)
                                "SWARMFORGE_PACKS_DIR" (str pack)}}
-                        (str (fs/path repo-root "get-swarm-forge"))
+                        (str (fs/path repo-root "bin" "get-swarm-forge"))
                         "two-pack" "--cli" "codex")
             conf (slurp (str (fs/path host "swarmforge/swarmforge.conf")))]
         (is (zero? (:exit result)) (:err result))
@@ -1331,7 +1331,7 @@
       (let [result (run {:dir host
                          :env {"SWARMFORGE_BASE_DIR" (str base)
                                "SWARMFORGE_PACKS_DIR" (str pack)}}
-                        (str (fs/path repo-root "get-swarm-forge"))
+                        (str (fs/path repo-root "bin" "get-swarm-forge"))
                         "--cli" "copilot" "lieutenant")
             project-conf (slurp (str (fs/path host ".swarmforge/project-pack/swarmforge/swarmforge.conf")))
             host-conf (slurp (str (fs/path host "swarmforge/swarmforge.conf")))]
@@ -1346,7 +1346,7 @@
 
 (defn pty-install [dir env choice & args]
   (let [driver (fs/path dir ".pty_drive.py")
-        installer (str (fs/path repo-root "get-swarm-forge"))]
+        installer (str (fs/path repo-root "bin" "get-swarm-forge"))]
     (write-file driver
                 (str "import os, pty, select, signal, sys\n"
                      "installer, choice = sys.argv[1], sys.argv[2].encode()\n"
