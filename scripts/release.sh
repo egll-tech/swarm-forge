@@ -195,18 +195,32 @@ git add "$FORMULA_PATH"
 git commit -m "chore(formula): pin sha256 for ${TAG}"
 git push "$REMOTE" HEAD
 
-echo "Updating homebrew branch..."
+MAIN_COMMIT=$(git rev-parse HEAD)
+git fetch "$REMOTE" main
+if [[ $(git rev-parse "$REMOTE/main") != "$MAIN_COMMIT" ]]; then
+  echo "Error: $REMOTE/main is not the released commit ${MAIN_COMMIT}" >&2
+  exit 1
+fi
+
+echo "Updating homebrew branch from ${MAIN_COMMIT}..."
 homebrew_status=0
 {
   git fetch "$REMOTE" homebrew
   git checkout -B homebrew "$REMOTE/homebrew"
-  # bin.install looks for bin/. A homebrew checkout that only has the
-  # formula deploys nothing, so keep the scripts on this branch too.
-  git rm -r --ignore-unmatch --quiet bin
-  git checkout main -- "$FORMULA_PATH" bin
-  git add "$FORMULA_PATH" bin
+  # The tap branch only publishes Formula/ and bin/. Replace both from the
+  # released main commit so script edits, additions, and deletions land here.
+  git rm -r --ignore-unmatch --quiet bin Formula
+  git checkout "$MAIN_COMMIT" -- Formula bin
+  git add Formula bin
   if ! git diff --cached --quiet; then
+    echo "Changes from main brought onto homebrew:"
+    git diff --cached --stat
     git commit -m "chore(formula): release ${TAG}"
+  fi
+  if ! git diff --quiet "$MAIN_COMMIT" -- Formula bin; then
+    echo "Error: homebrew Formula/ and bin/ do not match main ${MAIN_COMMIT}" >&2
+    git diff --stat "$MAIN_COMMIT" -- Formula bin >&2
+    exit 1
   fi
   if ! git ls-files bin | grep -q '^bin/get-swarm-forge$'; then
     echo "Error: homebrew branch is missing bin/get-swarm-forge" >&2
