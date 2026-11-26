@@ -122,8 +122,8 @@ if [[ ! -f $FORMULA_PATH ]]; then
 fi
 
 sed -i.bak \
-  -e "s/^  version \".*\"/  version \"${NEW_VERSION}\"/" \
-  -e "s/^  sha256 \".*\"/  sha256 \"${SHA256}\"/" \
+  -e "s/\(version \)\"[^\"]*\"/\1\"${NEW_VERSION}\"/" \
+  -e "s/\(sha256 \)\"[^\"]*\"/\1\"${SHA256}\"/" \
   "$FORMULA_PATH"
 rm -f "${FORMULA_PATH}.bak"
 
@@ -135,10 +135,9 @@ git commit -m "chore(formula): release ${TAG}"
 
 git tag -a "$TAG" -m "Release ${TAG}"
 
-echo "Pushing commit and tag..."
-git push "$REMOTE" HEAD
+echo "Pushing tag..."
 git push "$REMOTE" "$TAG"
 
 echo
-echo "Released $TAG (commit and tag pushed)"
+echo "Released $TAG (tag pushed)"
 echo "Users: brew upgrade egll/swarm-forge"
