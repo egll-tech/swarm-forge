@@ -200,10 +200,17 @@ homebrew_status=0
 {
   git fetch "$REMOTE" homebrew
   git checkout -B homebrew "$REMOTE/homebrew"
-  git checkout main -- "$FORMULA_PATH"
-  git add "$FORMULA_PATH"
+  # bin.install looks for bin/. A homebrew checkout that only has the
+  # formula deploys nothing, so keep the scripts on this branch too.
+  git rm -r --ignore-unmatch --quiet bin
+  git checkout main -- "$FORMULA_PATH" bin
+  git add "$FORMULA_PATH" bin
   if ! git diff --cached --quiet; then
     git commit -m "chore(formula): release ${TAG}"
+  fi
+  if ! git ls-files bin | grep -q '^bin/get-swarm-forge$'; then
+    echo "Error: homebrew branch is missing bin/get-swarm-forge" >&2
+    exit 1
   fi
   git push "$REMOTE" homebrew
 } || homebrew_status=$?

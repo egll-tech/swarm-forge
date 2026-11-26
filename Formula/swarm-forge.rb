@@ -6,7 +6,11 @@ class SwarmForge < Formula
   sha256 "f4734287649ba5e1fbb79d51095ad9b37d77bdead998c7cb9e8c4772d911041f"
 
   def install
-    bin.install Dir["bin/*"]
+    scripts = Dir["bin/*"]
+    scripts = Dir["#{tap.path}/bin/*"] if scripts.empty? && tap
+    odie "swarm-forge: bin/ has no scripts to install" if scripts.empty?
+
+    bin.install scripts
   end
 
   test do

@@ -58,8 +58,9 @@ helper changes. The helper is the supported entry point because it composes
 files from more than one branch.
 
 Homebrew installs `Formula/swarm-forge.rb` from this repository's default
-branch, `main`. Current Homebrew will not load that third-party tap until
-`brew trust` has allowed it.
+branch, `main`. That formula installs every script in `bin/`. The `homebrew`
+branch carries the same formula and those `bin/` scripts. Current Homebrew
+will not load this third-party tap until `brew trust` has allowed it.
 
 ## Composition
 
